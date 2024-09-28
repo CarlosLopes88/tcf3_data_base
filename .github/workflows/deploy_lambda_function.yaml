@@ -1,0 +1,60 @@
+name: Deploy Lambda Function
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    # Checkout do código
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # Configurar o Node.js para instalar dependências
+    - name: Set up Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '20'
+
+    # Instalar dependências
+    - name: Install dependencies
+      run: npm install
+      working-directory: ./auth-lambda
+
+    # Compactar os arquivos da função Lambda e mover para o diretório terraform
+    - name: Package Lambda
+      run: |
+        zip -r function.zip .
+        mv function.zip ./terraform/  # Mover o zip para o diretório do Terraform
+      working-directory: ./auth-lambda
+
+    # Configurar as credenciais AWS com secrets
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    # Setup Terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: 1.5.0
+
+    # Inicializar o Terraform
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ./auth-lambda/terraform
+
+    # Aplicar o Terraform com a variável MONGO_URI passada do Secret do GitHub
+    - name: Terraform Apply
+      run: terraform apply -var="mongo_uri=${{ secrets.MONGO_URI }}" -auto-approve
+      working-directory: ./auth-lambda/terraform
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}

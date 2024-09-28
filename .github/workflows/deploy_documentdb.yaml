@@ -1,0 +1,32 @@
+name: Deploy DocumentDB
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: 1.5.0
+
+    # Inicializar o Terraform
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ./db-infra/terraform
+
+    # Aplicar as mudanças do Terraform
+    - name: Terraform Apply
+      run: terraform apply -var 'master_username=${{ secrets.DB_MASTER_USERNAME }}' -var 'master_password=${{ secrets.DB_MASTER_PASSWORD }}' -auto-approve
+      working-directory: ./db-infra/terraform
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}
