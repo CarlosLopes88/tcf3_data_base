@@ -1,11 +1,12 @@
+# Provedor AWS
 provider "aws" {
   region = "us-east-1"
 }
 
-# Data source para listar as Zonas de Disponibilidade
+# Data source para listar as Zonas de Disponibilidade (necessário para criar subnets)
 data "aws_availability_zones" "available" {}
 
-# Criação da VPC (se não existir)
+# Criação da VPC para isolar os recursos de rede
 resource "aws_vpc" "eks_vpc" {
   cidr_block = "10.0.0.0/16"
   tags = {
@@ -13,19 +14,19 @@ resource "aws_vpc" "eks_vpc" {
   }
 }
 
-# Criação das subnets
+# Criação de duas subnets em diferentes zonas de disponibilidade
 resource "aws_subnet" "eks_subnets" {
   count             = 2
   cidr_block        = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, count.index)
   vpc_id            = aws_vpc.eks_vpc.id
-  availability_zone = element(data.aws_availability_zones.available.names, count.index)
+  availability_zone = element(data.aws_availability_zones.available.names, count.index)  # Zonas de disponibilidade dinâmicas
 
   tags = {
     Name = "eks-subnet-${count.index + 1}"
   }
 }
 
-# Criação do Internet Gateway
+# Criação do Internet Gateway para permitir a comunicação com a internet
 resource "aws_internet_gateway" "eks_igw" {
   vpc_id = aws_vpc.eks_vpc.id
   tags = {
@@ -33,12 +34,12 @@ resource "aws_internet_gateway" "eks_igw" {
   }
 }
 
-# Criação da tabela de rotas
+# Criação da tabela de rotas para rotear o tráfego da VPC para a internet
 resource "aws_route_table" "eks_route_table" {
   vpc_id = aws_vpc.eks_vpc.id
 
   route {
-    cidr_block = "0.0.0.0/0"
+    cidr_block = "0.0.0.0/0"  # Permite tráfego para a internet
     gateway_id = aws_internet_gateway.eks_igw.id
   }
 
@@ -54,24 +55,24 @@ resource "aws_route_table_association" "eks_route_table_association" {
   route_table_id = aws_route_table.eks_route_table.id
 }
 
-# Criação do Security Group para o DocumentDB
+# Criação do Security Group para o DocumentDB (controla o acesso de rede)
 resource "aws_security_group" "docdb_sg" {
   name        = "documentdb-sg"
   description = "Security group for DocumentDB"
-  vpc_id      = aws_vpc.eks_vpc.id
+  vpc_id      = aws_vpc.eks_vpc.id  # Associar o SG à VPC
 
   ingress {
-    from_port   = 27017
+    from_port   = 27017   # Porta padrão do MongoDB/DocumentDB
     to_port     = 27017
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_ips]
+    cidr_blocks = [var.allowed_ips]  # Permitir acesso somente de IPs específicos (use 0.0.0.0/0 em ambientes de teste, ajuste para produção)
   }
 
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"]  # Permitir saída para qualquer IP
   }
 }
 
@@ -89,12 +90,12 @@ resource "aws_docdb_subnet_group" "docdb_subnet_group" {
 resource "aws_docdb_cluster" "docdb_cluster" {
   cluster_identifier      = "my-documentdb-cluster"
   engine                  = "docdb"
-  master_username         = var.master_username
-  master_password         = var.master_password
-  backup_retention_period = 1
-  preferred_backup_window = "07:00-09:00"
-  vpc_security_group_ids  = [aws_security_group.docdb_sg.id]
-  db_subnet_group_name    = aws_docdb_subnet_group.docdb_subnet_group.name
+  master_username         = var.master_username  # Definido na variável
+  master_password         = var.master_password  # Definido na variável (sensível)
+  backup_retention_period = 1  # Quantos dias os backups são mantidos
+  preferred_backup_window = "07:00-09:00"  # Horário preferido para backups automáticos
+  vpc_security_group_ids  = [aws_security_group.docdb_sg.id]  # Associação do SG
+  db_subnet_group_name    = aws_docdb_subnet_group.docdb_subnet_group.name  # Associando o Subnet Group
 
   tags = {
     Name = "documentdb-cluster"
@@ -103,18 +104,18 @@ resource "aws_docdb_cluster" "docdb_cluster" {
 
 # Criação das instâncias que farão parte do cluster DocumentDB
 resource "aws_docdb_cluster_instance" "docdb_instance" {
-  count              = 1
+  count              = 1  # Número de instâncias (pode aumentar para melhorar a disponibilidade)
   identifier         = "my-documentdb-instance-${count.index}"
-  cluster_identifier = aws_docdb_cluster.docdb_cluster.id
-  instance_class     = "db.t3.medium"
-  apply_immediately  = true
+  cluster_identifier = aws_docdb_cluster.docdb_cluster.id  # Associar instância ao cluster criado
+  instance_class     = "db.t3.medium"  # Tipo de instância (escolha de acordo com a demanda)
+  apply_immediately  = true  # Aplicar mudanças imediatamente
 
   tags = {
     Name = "documentdb-instance-${count.index}"
   }
 }
 
-# Output para exibir o endpoint do DocumentDB
+# Output para exibir o endpoint do DocumentDB, utilizado para conexão no app
 output "documentdb_endpoint" {
   description = "Endpoint do DocumentDB"
   value       = aws_docdb_cluster.docdb_cluster.endpoint
@@ -135,5 +136,5 @@ variable "master_password" {
 variable "allowed_ips" {
   description = "Bloco de CIDR para permitir o acesso ao DocumentDB"
   type        = string
-  default     = "0.0.0.0/0"
+  default     = "0.0.0.0/0"  # Ajuste para IPs específicos em produção
 }
