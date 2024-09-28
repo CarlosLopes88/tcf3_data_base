@@ -1,4 +1,3 @@
-# Provedor AWS
 provider "aws" {
   region = "us-east-1"
 }
@@ -6,41 +5,80 @@ provider "aws" {
 # Data source para listar as Zonas de Disponibilidade (necessário para criar subnets)
 data "aws_availability_zones" "available" {}
 
-# Criação da VPC para isolar os recursos de rede
+# Verificar se a VPC já existe
+data "aws_vpc" "existing_vpc" {
+  filter {
+    name   = "tag:Name"
+    values = ["eks-vpc"]
+  }
+  count = length(try(data.aws_vpc.existing_vpc.id, [])) == 0 ? 1 : 0
+}
+
+# Criar a VPC caso não exista
 resource "aws_vpc" "eks_vpc" {
+  count      = length(data.aws_vpc.existing_vpc.id) == 0 ? 1 : 0
   cidr_block = "10.0.0.0/16"
   tags = {
     Name = "eks-vpc"
   }
 }
 
-# Criação de duas subnets em diferentes zonas de disponibilidade
+# Verificar se as subnets já existem
+data "aws_subnet" "existing_subnet" {
+  filter {
+    name   = "tag:Name"
+    values = ["eks-subnet-1", "eks-subnet-2"]
+  }
+  count = length(try(data.aws_subnet.existing_subnet.id, [])) == 0 ? 1 : 0
+}
+
+# Criar subnets caso não existam
 resource "aws_subnet" "eks_subnets" {
-  count             = 2
+  count             = length(data.aws_subnet.existing_subnet.id) == 0 ? 2 : 0
   cidr_block        = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, count.index)
-  vpc_id            = aws_vpc.eks_vpc.id
-  availability_zone = element(data.aws_availability_zones.available.names, count.index)  # Zonas de disponibilidade dinâmicas
+  vpc_id            = coalesce(data.aws_vpc.existing_vpc.id, aws_vpc.eks_vpc.id)
+  availability_zone = element(data.aws_availability_zones.available.names, count.index)
 
   tags = {
     Name = "eks-subnet-${count.index + 1}"
   }
 }
 
-# Criação do Internet Gateway para permitir a comunicação com a internet
+# Verificar se o Internet Gateway já existe
+data "aws_internet_gateway" "existing_igw" {
+  filter {
+    name   = "tag:Name"
+    values = ["eks-internet-gateway"]
+  }
+  count = length(try(data.aws_internet_gateway.existing_igw.id, [])) == 0 ? 1 : 0
+}
+
+# Criar Internet Gateway caso não exista
 resource "aws_internet_gateway" "eks_igw" {
-  vpc_id = aws_vpc.eks_vpc.id
+  count  = length(data.aws_internet_gateway.existing_igw.id) == 0 ? 1 : 0
+  vpc_id = coalesce(data.aws_vpc.existing_vpc.id, aws_vpc.eks_vpc.id)
   tags = {
     Name = "eks-internet-gateway"
   }
 }
 
-# Criação da tabela de rotas para rotear o tráfego da VPC para a internet
+# Verificar se a Tabela de Rotas já existe
+data "aws_route_table" "existing_route_table" {
+  filter {
+    name   = "tag:Name"
+    values = ["eks-route-table"]
+  }
+  count = length(try(data.aws_route_table.existing_route_table.id, [])) == 0 ? 1 : 0
+}
+
+# Criar a Tabela de Rotas caso não exista
 resource "aws_route_table" "eks_route_table" {
-  vpc_id = aws_vpc.eks_vpc.id
+  count  = length(data.aws_route_table.existing_route_table.id) == 0 ? 1 : 0
+  vpc_id = coalesce(data.aws_vpc.existing_vpc.id, aws_vpc.eks_vpc.id)
 
   route {
-    cidr_block = "0.0.0.0/0"  # Permite tráfego para a internet
-    gateway_id = aws_internet_gateway.eks_igw.id
+    cidr_block = "0.0.0.0/0"
+    gateway_id = coalesce(data.aws_internet_gateway.existing_igw.id, aws_internet_gateway.eks_igw.id)
   }
 
   tags = {
@@ -52,27 +90,37 @@ resource "aws_route_table" "eks_route_table" {
 resource "aws_route_table_association" "eks_route_table_association" {
   count          = 2
   subnet_id      = aws_subnet.eks_subnets[count.index].id
-  route_table_id = aws_route_table.eks_route_table.id
+  route_table_id = coalesce(data.aws_route_table.existing_route_table.id, aws_route_table.eks_route_table.id)
 }
 
-# Criação do Security Group para o DocumentDB (controla o acesso de rede)
+# Verificar se o Security Group já existe
+data "aws_security_group" "existing_docdb_sg" {
+  filter {
+    name   = "tag:Name"
+    values = ["documentdb-sg"]
+  }
+  count = length(try(data.aws_security_group.existing_docdb_sg.id, [])) == 0 ? 1 : 0
+}
+
+# Criar o Security Group caso não exista
 resource "aws_security_group" "docdb_sg" {
+  count  = length(data.aws_security_group.existing_docdb_sg.id) == 0 ? 1 : 0
   name        = "documentdb-sg"
   description = "Security group for DocumentDB"
-  vpc_id      = aws_vpc.eks_vpc.id  # Associar o SG à VPC
+  vpc_id      = coalesce(data.aws_vpc.existing_vpc.id, aws_vpc.eks_vpc.id)
 
   ingress {
-    from_port   = 27017   # Porta padrão do MongoDB/DocumentDB
+    from_port   = 27017
     to_port     = 27017
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_ips]  # Permitir acesso somente de IPs específicos (use 0.0.0.0/0 em ambientes de teste, ajuste para produção)
+    cidr_blocks = [var.allowed_ips]
   }
 
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]  # Permitir saída para qualquer IP
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
@@ -86,42 +134,52 @@ resource "aws_docdb_subnet_group" "docdb_subnet_group" {
   }
 }
 
-# Criação do cluster DocumentDB
+# Verificar se o DocumentDB já existe
+data "aws_docdb_cluster" "existing_docdb_cluster" {
+  filter {
+    name   = "db-cluster-id"
+    values = ["my-documentdb-cluster"]
+  }
+  count = length(try(data.aws_docdb_cluster.existing_docdb_cluster.id, [])) == 0 ? 1 : 0
+}
+
+# Criar o cluster DocumentDB caso não exista
 resource "aws_docdb_cluster" "docdb_cluster" {
-  cluster_identifier      = "my-documentdb-cluster"
-  engine                  = "docdb"
-  master_username         = var.master_username  # Definido na variável
-  master_password         = var.master_password  # Definido na variável (sensível)
-  backup_retention_period = 1  # Quantos dias os backups são mantidos
-  preferred_backup_window = "07:00-09:00"  # Horário preferido para backups automáticos
-  vpc_security_group_ids  = [aws_security_group.docdb_sg.id]  # Associação do SG
-  db_subnet_group_name    = aws_docdb_subnet_group.docdb_subnet_group.name  # Associando o Subnet Group
+  count               = length(data.aws_docdb_cluster.existing_docdb_cluster.id) == 0 ? 1 : 0
+  cluster_identifier  = "my-documentdb-cluster"
+  engine              = "docdb"
+  master_username     = var.master_username
+  master_password     = var.master_password
+  backup_retention_period = 1
+  preferred_backup_window = "07:00-09:00"
+  vpc_security_group_ids  = [coalesce(data.aws_security_group.existing_docdb_sg.id, aws_security_group.docdb_sg.id)]
+  db_subnet_group_name    = aws_docdb_subnet_group.docdb_subnet_group.name
 
   tags = {
     Name = "documentdb-cluster"
   }
 }
 
-# Criação das instâncias que farão parte do cluster DocumentDB
+# Criação das instâncias do DocumentDB
 resource "aws_docdb_cluster_instance" "docdb_instance" {
-  count              = 1  # Número de instâncias (pode aumentar para melhorar a disponibilidade)
+  count              = 1
   identifier         = "my-documentdb-instance-${count.index}"
-  cluster_identifier = aws_docdb_cluster.docdb_cluster.id  # Associar instância ao cluster criado
-  instance_class     = "db.t3.medium"  # Tipo de instância (escolha de acordo com a demanda)
-  apply_immediately  = true  # Aplicar mudanças imediatamente
+  cluster_identifier = aws_docdb_cluster.docdb_cluster.id
+  instance_class     = "db.t3.medium"
+  apply_immediately  = true
 
   tags = {
     Name = "documentdb-instance-${count.index}"
   }
 }
 
-# Output para exibir o endpoint do DocumentDB, utilizado para conexão no app
+# Output do endpoint do DocumentDB
 output "documentdb_endpoint" {
   description = "Endpoint do DocumentDB"
   value       = aws_docdb_cluster.docdb_cluster.endpoint
 }
 
-# Variáveis necessárias para parametrizar o Terraform
+# Variáveis de entrada
 variable "master_username" {
   description = "Nome de usuário administrador do DocumentDB"
   type        = string
@@ -136,5 +194,5 @@ variable "master_password" {
 variable "allowed_ips" {
   description = "Bloco de CIDR para permitir o acesso ao DocumentDB"
   type        = string
-  default     = "0.0.0.0/0"  # Ajuste para IPs específicos em produção
+  default     = "0.0.0.0/0"
 }
