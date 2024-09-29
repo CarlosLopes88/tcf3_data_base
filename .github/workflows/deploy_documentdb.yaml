@@ -1,5 +1,6 @@
-name: Deploy DocumentDB
+name: Deploy DocumentDB  # Nome do workflow para o deploy do DocumentDB
 
+# O workflow será acionado quando houver um push na branch 'main'
 on:
   push:
     branches:
@@ -7,26 +8,31 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # O job será executado em um ambiente Ubuntu na versão mais recente.
+
     steps:
+    
+    # 1. Checkout do código do repositório
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v2  # Usa a ação oficial do GitHub para fazer o checkout do código na versão 2.
 
+    # 2. Configura o Terraform no ambiente
     - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v1
+      uses: hashicorp/setup-terraform@v1  # Usa a ação oficial para configurar o Terraform.
       with:
-        terraform_version: 1.5.0
+        terraform_version: 1.5.0  # Define a versão do Terraform que será utilizada como 1.5.0.
 
-    # Inicializar o Terraform
+    # 3. Inicializar o Terraform no diretório de infraestrutura do banco de dados (db-infra)
     - name: Terraform Init
-      run: terraform init
-      working-directory: ./db-infra/terraform
+      run: terraform init  # Executa o comando 'terraform init' para inicializar o diretório de trabalho do Terraform.
+      working-directory: ./db-infra/terraform  # Define o diretório onde o Terraform será inicializado (infraestrutura do banco de dados).
 
-    # Aplicar as mudanças do Terraform
+    # 4. Aplicar as mudanças do Terraform e passar variáveis sensíveis
     - name: Terraform Apply
-      run: terraform apply -var 'master_username=${{ secrets.DB_MASTER_USERNAME }}' -var 'master_password=${{ secrets.DB_MASTER_PASSWORD }}' -auto-approve
-      working-directory: ./db-infra/terraform
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.AWS_REGION }}
+      run: terraform apply -var 'master_username=${{ secrets.DB_MASTER_USERNAME }}' -var 'master_password=${{ secrets.DB_MASTER_PASSWORD }}' -auto-approve  
+      # Executa o comando 'terraform apply' passando as variáveis de nome de usuário e senha, que são fornecidas via secrets do GitHub.
+      working-directory: ./db-infra/terraform  # Define o diretório onde o Terraform será aplicado.
+      env:  # Define as variáveis de ambiente necessárias para a autenticação na AWS.
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}  # Acessa o ID da chave de acesso da AWS via secrets.
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}  # Acessa a chave secreta da AWS via secrets.
+        AWS_REGION: ${{ secrets.AWS_REGION }}  # Define a região da AWS via secrets.
