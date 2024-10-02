@@ -2,7 +2,7 @@ name: Deploy DocumentDB  # Nome do workflow para o deploy do DocumentDB
 
 # O workflow será acionado quando houver um push na branch 'main'
 on:
-  push:
+  pull_request:
     branches:
       - main
 
